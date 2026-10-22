@@ -1,0 +1,88 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -e
+
+cd "$(dirname "$0")"
+
+mkdir -p .github/workflows
+
+cat > .github/workflows/build-apk.yml <<'YAML'
+name: Build YoruStream APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yorustream-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform if missing
+        run: |
+          if [ ! -d android ]; then
+            flutter create \
+              --platforms=android \
+              --project-name yorustream \
+              --org com.yorustream \
+              --no-overwrite .
+          fi
+
+      - name: Ensure Internet permission
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          s = p.read_text()
+          permission = '<uses-permission android:name="android.permission.INTERNET"/>'
+          if permission not in s:
+              s = s.replace("<application", f"    {permission}\n    <application", 1)
+              p.write_text(s)
+          PY
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart (informational)
+        continue-on-error: true
+        run: flutter analyze
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: yorustream-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
+YAML
+
+echo "Workflow YoruStream berhasil dibuat."
+echo "Periksa hasilnya dengan:"
+echo "cat .github/workflows/build-apk.yml"
